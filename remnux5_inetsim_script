@@ -1,0 +1,399 @@
+#!/bin/bash
+#===============================================================================
+# FILE:         /media/LOGTARGET/remnux5_inetsim_script
+#
+# USAGE:        $ [...]
+#               # bash remnux5_inetsim_script start
+#               # [...]
+#               # bash remnux5_inetsim_script stop
+#               # [...]
+# OPTIONS:      none (use configuration!)
+#
+# DESCRIPTION:  This script check some necessary requirements before it
+#                 - switch from auto to manual network configuration
+#                 - config and start the "inetsim"-service (incl. iptables)
+#                 - config and start a dhcp-service
+#                 - save all collected data before exit
+#                 (for more there is an german PDF!)
+#
+# REQUIREMENTS: remnux-5.0-live-cd.iso (from https://remnux.org/)
+# BUGS:         ---
+# NOTES:        ---
+# AUTHOR:       Patrick Neumann, patrick@neumannsland.de
+# COMPANY:      (privately)
+#
+# VERSION:      0.6 (beta)
+# CREATED:      29.05.2015
+#
+# COPYRIGHT:	---
+# LICENSE:	---
+#
+# HISTORY:      0.6 - Patrick Neumann - Initial (public) release
+#===============================================================================
+
+#=== CONFIGURATION =============================================================
+# VMWare + shared folder + automount: "/mnt/hgst"
+readonly MOUNT_DIRECTORY="/media" 
+
+# VirtualBox + shared folder + automount: "sf_"
+readonly PUSHING_IN_BETWEEN="sf_" 
+
+readonly LOG_TARGET_LABEL="LOGTARGET"
+# The result after automount should look like this:
+#   USB:        /media/LOGTARGET
+#   VirtualBox: /media/sf_LOGTARGET (default)
+#   VMware:     /mnt/hgst/LOGTARGET
+# (That is the reason why manually mount should be preferred!)
+
+# Choose the right on after have a look at "ip link show".
+#   Most commonly it will be: "eth0".
+readonly ETHDEV="eth0"
+
+#-------------------------------------------------------------------------------
+# Check for root privileges.
+#-------------------------------------------------------------------------------
+if [[ 0 -ne "$( /usr/bin/id --user )" ]] ; then
+  /bin/echo
+  /bin/echo " You need to be root:"
+  /bin/echo
+  /bin/echo -e " remnux@remnux:~$ \e[1;31;40msudo -s\e[0m"
+  /bin/echo -e " (The password is: \"\e[1;32;40mmalware\e[0m\")"
+  /bin/echo
+  exit 1
+fi
+
+#-------------------------------------------------------------------------------
+# Check for LABEL.
+#-------------------------------------------------------------------------------
+if ! /bin/ls -1 "${MOUNT_DIRECTORY}" \
+     | /bin/grep --fixed-strings --word-regexp \
+       "${PUSHING_IN_BETWEEN}${LOG_TARGET_LABEL}" \
+     > /dev/null 2>&1 ; then
+  /bin/echo
+  /bin/echo " Convention:"
+  /bin/echo " USB-Stick (physical): \"/media/LOGTARGET\" or"
+  /bin/echo " VirtualBox (shared folder): \"/media/sf_LOGTARGET\" or "
+  /bin/echo " VMWare (shared folder): \"/mnt/hgst/LOGTARGET)!\""
+  /bin/echo
+  /bin/echo " Unfortunately not accessible to an appropriate file system under:"
+  /bin/echo -e " \"\e[1;31;40m${MOUNT_DIRECTORY}/${PUSHING_IN_BETWEEN}${LOG_TARGET_LABEL}\e[0m\""
+  /bin/echo
+  /bin/echo " (But you can change the convention by editing the configuration!)"
+  /bin/echo
+  exit 1
+fi
+
+#-------------------------------------------------------------------------------
+# Check for NTFS in a USB flash drive.
+#-------------------------------------------------------------------------------
+readonly FSCHECK=$( /sbin/blkid \
+                    | /bin/grep --fixed-strings "LABEL=\"$LOG_TARGET_LABEL\"" )
+
+if [[ -n "${FSCHECK}" ]] ; then
+  if [[ "${FSCHECK}" != *ntfs* ]] ; then
+    /bin/echo
+    /bin/echo " To avoid confusing error messages,"
+    /bin/echo " in case of a USB flash drive is the recommended file system:"
+    /bin/echo -e " \e[1;31;40mNTFS\e[0m!"
+    /bin/echo
+    exit 1
+  fi
+fi
+
+readonly LOG_TARGET="${MOUNT_DIRECTORY}/${PUSHING_IN_BETWEEN}${LOG_TARGET_LABEL}"
+
+#-------------------------------------------------------------------------------
+# Check if configured NIC exists.
+#-------------------------------------------------------------------------------
+if ! /bin/grep "${ETHDEV}" <( /bin/ls -1 "/sys/class/net" ) \
+     > /dev/null 2>&1 ; then
+  /bin/echo
+  /bin/echo -e " \e[1;31;40mNIC \"${ETHDEV}\" does not exist! - EXIT!\e[0m"
+  /bin/echo
+  exit 1
+fi
+
+/bin/echo
+
+case "${1}" in
+  start)
+
+#-------------------------------------------------------------------------------
+# Check if the script is already running.
+#-------------------------------------------------------------------------------
+    if [ -f "${LOG_TARGET}/running" ] ; then
+      /bin/echo -e " \e[1;31;40m\"inetsim\" already running? - EXIT!\e[0m"
+      /bin/echo
+      exit 1
+    fi
+
+#-------------------------------------------------------------------------------
+# Deactivating automatic network configuration.
+#-------------------------------------------------------------------------------
+    if [ -f "/etc/init.d/network-manager" ] ; then
+      if [[ "$( /usr/sbin/service network-manager status )" == *running* ]] ; then
+        /usr/sbin/service network-manager stop
+      fi
+    fi
+
+    if /usr/bin/pgrep dhclient > /dev/null 2>&1 ; then
+      /bin/kill -INT "$( /usr/bin/pgrep dhclient )"
+    fi
+
+    /sbin/ip link set "${ETHDEV}" down
+
+    /sbin/ip addr flush dev "${ETHDEV}"
+
+#-------------------------------------------------------------------------------
+# Manual network configuration.
+#-------------------------------------------------------------------------------
+    /sbin/ip addr add 10.20.30.1/24 dev "${ETHDEV}"
+
+    /sbin/ip link set "${ETHDEV}" up
+
+#-------------------------------------------------------------------------------
+# Configuring and starting the "inetsim" service.
+#-------------------------------------------------------------------------------
+    /bin/cp "/etc/inetsim/inetsim.conf"{,_backup}
+
+    /bin/sed --in-place "s/redirect_external_address[[:space:]]10\.10\.10\.1/#&/" \
+             "/etc/inetsim/inetsim.conf"
+
+    /bin/sed --in-place "s/redirect_exclude_port[[:space:]]*tcp:22/#&/" \
+             "/etc/inetsim/inetsim.conf"
+
+    /bin/cat <<EOF >> "/etc/inetsim/inetsim.conf"
+start_service dns
+start_service tftp
+start_service irc
+start_service ntp
+start_service finger
+start_service ident
+start_service syslog
+start_service time_tcp
+start_service time_udp
+start_service daytime_tcp
+start_service daytime_udp
+start_service echo_tcp
+start_service echo_udp
+start_service discard_tcp
+start_service discard_udp
+start_service quotd_tcp
+start_service quotd_udp
+start_service chargen_tcp
+start_service chargen_udp
+start_service dummy_tcp
+start_service dummy_udp
+service_bind_address  10.20.30.1
+dns_default_ip        10.20.30.1
+create_reports        yes
+report_language       de
+redirect_enabled      yes
+redirect_ignore_bootp yes
+EOF
+
+    /bin/sed --in-place "s/ENABLED=0/ENABLED=1/" "/etc/default/inetsim"
+
+    /usr/sbin/service inetsim start
+
+    if [ ! -f "/var/run/inetsim.pid" ] ; then
+      /bin/echo -e " \e[1;31;40m\"inetsim\" start failed - EXIT!\e[0m"
+      /bin/echo
+      exit 1
+    fi
+
+#-------------------------------------------------------------------------------
+# Configuring and starting the "udhcpd" service.
+#-------------------------------------------------------------------------------
+    if /usr/bin/pgrep -f "/bin/busybox udhcpd" > /dev/null 2>&1 ; then
+      /bin/kill -INT "$( /usr/bin/pgrep -f "/bin/busybox udhcpd" )"
+      /bin/echo
+      exit 1
+    fi
+
+    if [ -d "${LOG_TARGET}/udhcpd" ] ; then
+      rm --recursive --force  "${LOG_TARGET}/udhcpd/"*
+    else
+      /bin/mkdir "${LOG_TARGET}/udhcpd"
+    fi
+
+    /usr/bin/touch "${LOG_TARGET}/udhcpd/udhcpd.leases"
+
+    /bin/cat <<EOF > "${LOG_TARGET}/udhcpd/udhcpd.conf"
+interface ${ETHDEV}
+lease_file ${LOG_TARGET}/udhcpd/udhcpd.leases
+start 10.20.30.20
+end 10.20.30.254
+option subnet 255.255.255.0
+option router 10.20.30.1
+option dns 10.20.30.1
+EOF
+
+    /bin/busybox udhcpd -S "${LOG_TARGET}/udhcpd/udhcpd.conf"
+
+    sleep 1
+
+    if [ ! -f "/var/run/udhcpd.pid" ] ; then
+      /bin/echo -e " \e[1;31;40m\"udhcpd\" start/reload failed - EXIT!\e[0m"
+      /bin/echo
+      exit 1
+    fi
+
+#-------------------------------------------------------------------------------
+# Ready for collecting...
+#-------------------------------------------------------------------------------
+    /usr/bin/touch "${LOG_TARGET}/running"
+
+    /bin/echo
+    /bin/echo -e "\e[1;32;40m REMnux + inetsim is ready for collecting data from"
+    /bin/echo -e " other connected (physical or virtual) machines. :-)\e[0m"
+    /bin/echo
+
+    ;;
+
+  stop)
+
+#-------------------------------------------------------------------------------
+# Check, if already running.
+#-------------------------------------------------------------------------------
+    if [ ! -f "${LOG_TARGET}/running" ] ; then
+      /bin/echo -e " \e[1;31;40m\"inetsim\" is not running? - EXIT!\e[0m"
+      /bin/echo
+      exit 1
+    fi
+
+#-------------------------------------------------------------------------------
+# Save firewall configuration (MS-Windows friendly).
+#-------------------------------------------------------------------------------
+    if [ -d "${LOG_TARGET}/iptables" ] ; then
+      rm --recursive --force  "${LOG_TARGET}/iptables/"*
+    else
+      /bin/mkdir "${LOG_TARGET}/iptables"
+    fi
+
+    /sbin/iptables-save > "${LOG_TARGET}/iptables/save"
+
+    /bin/sed --in-place 's/$/\r/' "${LOG_TARGET}/iptables/save"
+
+#-------------------------------------------------------------------------------
+# Stopping "inetsim" service, save data (MS-Windows friendly) and cleanup.
+#-------------------------------------------------------------------------------
+    /usr/sbin/service inetsim stop
+
+    if [ -f "/var/run/inetsim.pid" ] ; then
+      /bin/echo -e " \e[1;31m\"inetsim\" stop failed - EXIT!\e[0m"
+      /bin/echo
+      exit 1
+    fi
+
+    if [ -d "${LOG_TARGET}/inetsim" ] ; then
+      rm --recursive --force  "${LOG_TARGET}/inetsim"
+    fi
+
+    /bin/cp --recursive "/var/log/inetsim" "${LOG_TARGET}/"
+
+    /bin/rm "/var/log/inetsim/"*".log"
+
+    /bin/rm "/var/log/inetsim/report/"* 2> /dev/null
+
+    /bin/sed --in-place 's/$/\r/' "${LOG_TARGET}/inetsim/debug.log"
+
+    /bin/sed --in-place 's/$/\r/' "${LOG_TARGET}/inetsim/main.log"
+
+    /bin/sed --in-place 's/$/\r/' "${LOG_TARGET}/inetsim/service.log"
+
+    /bin/sed --in-place \
+             's/$/\r/' "${LOG_TARGET}/inetsim/report/report."*".txt" \
+             2> /dev/null
+
+    /bin/mv "/etc/inetsim/inetsim.conf"{_backup,}
+
+#-------------------------------------------------------------------------------
+# Stopping "udhcpd" service and save data (MS-Windows friendly).
+#-------------------------------------------------------------------------------
+
+    readonly UDHCPD_PID="$( cat /var/run/udhcpd.pid )"
+
+    /bin/kill -INT "${UDHCPD_PID}"
+
+    sleep 1
+
+    if /usr/bin/pgrep -f "/bin/busybox udhcpd" > /dev/null 2>&1 ; then
+      /bin/echo -e " \e[1;31;40m\"udhcpd\" stop failed - EXIT!\e[0m"
+      /bin/echo
+      exit 1
+    fi
+
+    /bin/rm "/var/run/udhcpd.pid"
+
+    /bin/grep --fixed-strings "udhcpd[${UDHCPD_PID}]" "/var/log/syslog" \
+              > "${LOG_TARGET}/udhcpd/udhcpd.log"
+
+    /bin/sed --in-place 's/$/\r/' "${LOG_TARGET}/udhcpd/udhcpd.log"
+
+#-------------------------------------------------------------------------------
+# Force save data to the "LOGTARGET".
+#-------------------------------------------------------------------------------
+    /bin/sync
+
+#-------------------------------------------------------------------------------
+# ... stopped.
+#-------------------------------------------------------------------------------
+    /bin/rm "${LOG_TARGET}/running"
+
+    /bin/echo
+
+#-------------------------------------------------------------------------------
+# Last instructions.
+#-------------------------------------------------------------------------------
+    if [ -n "$FSCHECK" ] ; then
+      /bin/echo " You can unmount the USB flash drive:"
+      /bin/echo
+      /bin/echo -e " root@remnux:~$ \e[1;31;40mumount ${LOG_TARGET}\e[0m"
+      /bin/echo
+      /bin/echo " and disconnect it from the PC."
+      /bin/echo
+    fi
+    /bin/echo -e "\e[1;32;40m Now you can have a look at the collected data!"
+    /bin/echo " (Also under a Microsoft Operating System!)"
+    /bin/echo
+    /bin/echo -e " Have fun!\e[0m"
+
+    ;;
+
+  status)
+
+#-------------------------------------------------------------------------------
+# Check, if running.
+#-------------------------------------------------------------------------------
+    if [ -f "${LOG_TARGET}/running" ] ; then
+      /bin/echo -e " \e[1;32;40mSeemingly running!?\e[1;0m"
+    else
+      /bin/echo -e " \e[1;31;40mSeemingly NOT running!?\e[1;0m"
+    fi
+
+    ;;
+
+  *)
+
+#-------------------------------------------------------------------------------
+# Display usage.
+#-------------------------------------------------------------------------------
+    /bin/echo " Usage:"
+    /bin/echo
+    /bin/echo " Start collecting data:"
+    /bin/echo -e " root@remnux:~# \e[1;32;40mbash ${0} start\e[0m"
+    /bin/echo
+    /bin/echo " Check status (running or not):"
+    /bin/echo -e " root@remnux:~# \e[1;33;40mbash ${0} status\e[0m"
+    /bin/echo
+    /bin/echo " Stop collection data:"
+    /bin/echo -e " root@remnux:~# \e[1;31;40mbash ${0} stop\e[0m"
+    /bin/echo
+    exit 1
+
+esac
+
+/bin/echo
+
+exit 0
