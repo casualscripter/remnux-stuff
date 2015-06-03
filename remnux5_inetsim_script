@@ -1,34 +1,71 @@
 #!/bin/bash
 #===============================================================================
-# FILE:         /media/LOGTARGET/remnux5_inetsim_script
+# DIRECTORY:
+#   /media/LOGTARGET/
 #
-# USAGE:        $ [...]
-#               # bash remnux5_inetsim_script start
-#               # [...]
-#               # bash remnux5_inetsim_script stop
-#               # [...]
-# OPTIONS:      none (use configuration!)
+# FILE:
+#   remnux5_inetsim_script
 #
-# DESCRIPTION:  This script check some necessary requirements before it
-#                 - switch from auto to manual network configuration
-#                 - config and start the "inetsim"-service (incl. iptables)
-#                 - config and start a dhcp-service
-#                 - save all collected data before exit
-#                 (for more there is an german PDF!)
+# USAGE:
+#   $ [...]
+#   # bash remnux5_inetsim_script start
+#   # [...]
+#   # bash remnux5_inetsim_script stop
+#   # [...]
 #
-# REQUIREMENTS: remnux-5.0-live-cd.iso (from https://remnux.org/)
-# BUGS:         ---
-# NOTES:        ---
-# AUTHOR:       Patrick Neumann, patrick@neumannsland.de
-# COMPANY:      (privately)
+# OPTIONS:
+#   none (use configuration!)
 #
-# VERSION:      0.6 (beta)
-# CREATED:      29.05.2015
+# DESCRIPTION:
+#   This script check some necessary requirements before it
+#   - switch from auto to manual network configuration
+#   - config and start the "inetsim"-service (incl. iptables)
+#   - config and start a dhcp-service
+#   - save all collected data before exit
+#   (for more there is an german PDF!)
 #
-# COPYRIGHT:	---
-# LICENSE:	---
+# REQUIREMENTS:
+#   remnux-5.0-live-cd.iso (from https://remnux.org/)
 #
-# HISTORY:      0.6 - Patrick Neumann - Initial (public) release
+# BUGS:
+#   ---
+#
+# NOTES:
+#   Does run on REMnux >= 4.
+#   Does NOT run on REMnux <= 3.
+#
+# AUTHOR:
+#   Patrick Neumann, patrick@neumannsland.de
+#
+# COMPANY:
+#   (privately)
+#
+# VERSION:
+#   0.6 (beta)
+#
+# CREATED:
+#   29.05.2015
+#
+# COPYRIGHT (C):
+#   2015 - Patrick Neumann
+#
+# LICENSE:
+#   This program is free software: you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation, either version 3 of the License, or
+#   (at your option) any later version.
+#
+# WARRANTY:
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program. If not, see <http://www.gnu.org/licenses/>.
+#
+# HISTORY:
+#   0.6 - Patrick Neumann - Initial (public) release
 #===============================================================================
 
 #=== CONFIGURATION =============================================================
