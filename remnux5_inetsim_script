@@ -25,14 +25,15 @@
 #   (for more there is an german PDF!)
 #
 # REQUIREMENTS:
-#   remnux-5.0-live-cd.iso (from https://remnux.org/)
+#   remnux-5.0-live-cd.iso
+#   (from https://sourceforge.net/projects/remnux/files/version5/)
 #
 # BUGS:
 #   ---
 #
 # NOTES:
-#   Does run on REMnux >= 4.
-#   Does NOT run on REMnux <= 3.
+#   Does run on REMnux 4 and 5.
+#   Does NOT run on REMnux <= 3 or => 6!
 #
 # AUTHOR:
 #   Patrick Neumann, patrick@neumannsland.de
@@ -41,16 +42,16 @@
 #   (privately)
 #
 # VERSION:
-#   0.6 (beta)
+#   0.9 (Beta)
 #
 # LINK TO THE MOST CURRENT VERSION:
 #   https://raw.githubusercontent.com/casualscripter/remnux-stuff/master/remnux5_inetsim_script
 #
 # CREATED:
-#   29.05.2015
+#   02.07.2016
 #
 # COPYRIGHT (C):
-#   2015 - Patrick Neumann
+#   2015-2016 - Patrick Neumann
 #
 # LICENSE:
 #   This program is free software: you can redistribute it and/or modify
@@ -68,7 +69,8 @@
 #    along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 # HISTORY:
-#   0.6 - Patrick Neumann - Initial (public) release
+#   0.6 (Alpha) - Patrick Neumann - Initial (public) release
+#   0.9 (Beta) - Patrick Neumann - added network capturing
 #===============================================================================
 
 #=== CONFIGURATION =============================================================
@@ -88,6 +90,9 @@ readonly LOG_TARGET_LABEL="LOGTARGET"
 # Choose the right on after have a look at "ip link show".
 #   Most commonly it will be: "eth0".
 readonly ETHDEV="eth0"
+
+# Custom timezone (the default in REMnux is "EST5EDT")
+readonly TIMEZONE="Europe/Berlin"
 
 #-------------------------------------------------------------------------------
 # Check for root privileges.
@@ -168,6 +173,14 @@ case "${1}" in
     fi
 
 #-------------------------------------------------------------------------------
+# Configuring custom timezone.
+#-------------------------------------------------------------------------------
+    if [ ! -L "/etc/localtime" ] ; then
+      /bin/rm "/etc/localtime"
+      /bin/ln -s "/usr/share/zoneinfo/${TIMEZONE}" "/etc/localtime"
+    fi
+
+#-------------------------------------------------------------------------------
 # Deactivating automatic network configuration.
 #-------------------------------------------------------------------------------
     if [ -f "/etc/init.d/network-manager" ] ; then
@@ -189,7 +202,7 @@ case "${1}" in
 #-------------------------------------------------------------------------------
     /sbin/ip addr add 10.20.30.1/24 dev "${ETHDEV}"
 
-    /sbin/ip link set "${ETHDEV}" up
+    /sbin/ip link set "${ETHDEV}" promisc on up
 
 #-------------------------------------------------------------------------------
 # Configuring and starting the "inetsim" service.
@@ -271,13 +284,32 @@ EOF
 
     /bin/busybox udhcpd -S "${LOG_TARGET}/udhcpd/udhcpd.conf"
 
-    sleep 1
+    /bin/sleep 1
 
     if [ ! -f "/var/run/udhcpd.pid" ] ; then
       /bin/echo -e " \e[1;31;40m\"udhcpd\" start/reload failed - EXIT!\e[0m"
       /bin/echo
       exit 1
     fi
+
+#-------------------------------------------------------------------------------
+# Start (simple) sniffing.
+#-------------------------------------------------------------------------------
+  if [ ! -d "${LOG_TARGET}/tcpdump" ] ; then
+    /bin/mkdir "${LOG_TARGET}/tcpdump"
+  fi
+
+  /usr/bin/nohup /usr/sbin/tcpdump \
+    -s 0 -B 4096 -w "${LOG_TARGET}/tcpdump/capture.pcap" \
+    > "${LOG_TARGET}/tcpdump/out.txt" 2>&1 &
+
+  /bin/sleep 1
+
+  if [ ! -f "${LOG_TARGET}/tcpdump/capture.pcap" ] ; then
+    /bin/echo -e " \e[1;31;40m\"starting tcpdump failed - EXIT!\e[0m"
+    /bin/echo
+    exit 1
+  fi
 
 #-------------------------------------------------------------------------------
 # Ready for collecting...
@@ -314,6 +346,13 @@ EOF
     /sbin/iptables-save > "${LOG_TARGET}/iptables/save"
 
     /bin/sed --in-place 's/$/\r/' "${LOG_TARGET}/iptables/save"
+
+#-------------------------------------------------------------------------------
+# Stop sniffing (MS-Windows friendly).
+#-------------------------------------------------------------------------------
+  /bin/kill -INT $( /usr/bin/pgrep "tcpdump" )
+
+  /bin/sed --in-place 's/$/\r/' "${LOG_TARGET}/tcpdump/out.txt"
 
 #-------------------------------------------------------------------------------
 # Stopping "inetsim" service, save data (MS-Windows friendly) and cleanup.
@@ -356,7 +395,7 @@ EOF
 
     /bin/kill -INT "${UDHCPD_PID}"
 
-    sleep 1
+    /bin/sleep 1
 
     if /usr/bin/pgrep -f "/bin/busybox udhcpd" > /dev/null 2>&1 ; then
       /bin/echo -e " \e[1;31;40m\"udhcpd\" stop failed - EXIT!\e[0m"
@@ -375,6 +414,11 @@ EOF
 # Force save data to the "LOGTARGET".
 #-------------------------------------------------------------------------------
     /bin/sync
+
+#-------------------------------------------------------------------------------
+# Loosen rights for non-administrators.
+#-------------------------------------------------------------------------------
+    /bin/chmod -R +r "${LOG_TARGET}"
 
 #-------------------------------------------------------------------------------
 # ... stopped.
